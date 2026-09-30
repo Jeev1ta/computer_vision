@@ -14,7 +14,9 @@ import os, sys
 import torch
 from random import randint
 from utils.loss_utils import l1_loss, ssim, l2_loss, lpips_loss
-from gaussian_renderer import render, network_gui
+from gaussian_renderer import render, network_gui, render_semantics
+from utils.semantic_loss import compute_semantic_loss
+from scene.semantic_loader import SemanticDataManager
 import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
@@ -40,7 +42,8 @@ except ImportError:
     TENSORBOARD_FOUND = False
 def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_iterations, 
                          checkpoint_iterations, checkpoint, debug_from,
-                         gaussians, scene, stage, tb_writer, train_iter,timer):
+                         gaussians, scene, stage, tb_writer, train_iter,timer,
+                         semantic_manager=None):
     first_iter = 0
 
     gaussians.training_setup(opt)
@@ -215,6 +218,32 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
         # if opt.lambda_lpips !=0:
         #     lpipsloss = lpips_loss(image_tensor,gt_image_tensor,lpips_model)
         #     loss += opt.lambda_lpips * lpipsloss
+
+        # Phase 3: Semantic supervision loss
+        sem_loss_val = 0.0
+        if gaussians.has_semantics and semantic_manager is not None and semantic_manager.enabled and stage == "fine":
+            sem_loss = torch.tensor(0.0, device="cuda")
+            valid_sem_count = 0
+            for v_cam in viewpoint_cams:
+                rendered_sem = render_semantics(v_cam, gaussians, pipe, stage=stage)
+                if rendered_sem is not None:
+                    gt_label = semantic_manager.get_label_map(v_cam.image_name)
+                    gt_feat = semantic_manager.get_feature_map(v_cam.image_name)
+                    mode = getattr(hyper, 'semantic_mode', 'cross_entropy')
+                    if (mode == "cross_entropy" and gt_label is not None) or \
+                       (mode in ["cosine", "mse"] and gt_feat is not None):
+                        cur_loss = compute_semantic_loss(
+                            rendered_semantics=rendered_sem,
+                            gt_labels=gt_label,
+                            gt_features=gt_feat,
+                            loss_type=mode,
+                        )
+                        sem_loss = sem_loss + cur_loss
+                        valid_sem_count += 1
+            if valid_sem_count > 0:
+                sem_loss = sem_loss / valid_sem_count
+                loss = loss + opt.lambda_sem * sem_loss
+                sem_loss_val = sem_loss.item()
         
         loss.backward()
         if torch.isnan(loss).any():
@@ -231,9 +260,12 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
             ema_psnr_for_log = 0.4 * psnr_ + 0.6 * ema_psnr_for_log
             total_point = gaussians._xyz.shape[0]
             if iteration % 10 == 0:
-                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}",
-                                          "psnr": f"{psnr_:.{2}f}",
-                                          "point":f"{total_point}"})
+                postfix_dict = {"Loss": f"{ema_loss_for_log:.{7}f}",
+                                "psnr": f"{psnr_:.{2}f}",
+                                "point":f"{total_point}"}
+                if sem_loss_val > 0:
+                    postfix_dict["sem_loss"] = f"{sem_loss_val:.{4}f}"
+                progress_bar.set_postfix(postfix_dict)
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
@@ -297,6 +329,19 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
 def training(dataset, hyper, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, expname):
     # first_iter = 0
     tb_writer = prepare_output_and_logger(expname)
+
+    # Phase 3: Semantic Data Loader
+    semantic_manager = None
+    if getattr(args, 'enable_semantics', False) or getattr(hyper, 'semantic_feature_dim', 0) > 0:
+        semantic_manager = SemanticDataManager(dataset.source_path)
+        if semantic_manager.enabled:
+            if getattr(hyper, 'semantic_feature_dim', 0) == 0:
+                if getattr(hyper, 'semantic_mode', 'cross_entropy') == 'cross_entropy':
+                    hyper.semantic_feature_dim = max(semantic_manager.num_classes + 1, 6)
+                else:
+                    hyper.semantic_feature_dim = semantic_manager.feature_dim
+            print(f"[Phase 3] Semantic supervision enabled: dim={hyper.semantic_feature_dim}, mode={hyper.semantic_mode}")
+
     gaussians = GaussianModel(dataset.sh_degree, hyper)
     dataset.model_path = args.model_path
     timer = Timer()
@@ -304,10 +349,12 @@ def training(dataset, hyper, opt, pipe, testing_iterations, saving_iterations, c
     timer.start()
     scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_iterations,
                              checkpoint_iterations, checkpoint, debug_from,
-                             gaussians, scene, "coarse", tb_writer, opt.coarse_iterations,timer)
+                             gaussians, scene, "coarse", tb_writer, opt.coarse_iterations,timer,
+                             semantic_manager=None)
     scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_iterations,
                          checkpoint_iterations, checkpoint, debug_from,
-                         gaussians, scene, "fine", tb_writer, opt.iterations,timer)
+                         gaussians, scene, "fine", tb_writer, opt.iterations,timer,
+                         semantic_manager=semantic_manager)
 
 def prepare_output_and_logger(expname):    
     if not args.model_path:
@@ -410,6 +457,12 @@ if __name__ == "__main__":
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--expname", type=str, default = "")
     parser.add_argument("--configs", type=str, default = "")
+    # Phase 3: Semantic supervision CLI arguments
+    parser.add_argument("--enable_semantics", action="store_true", default=False, help="Enable Phase 3 semantic supervision")
+    parser.add_argument("--semantic_feature_dim", type=int, default=0, help="Semantic feature dimension (0 = auto from Phase 2 metadata)")
+    parser.add_argument("--semantic_mode", type=str, default="cross_entropy", choices=["cross_entropy", "cosine", "mse"], help="Semantic loss mode")
+    parser.add_argument("--lambda_sem", type=float, default=0.1, help="Semantic loss weight")
+    parser.add_argument("--semantic_lr", type=float, default=0.005, help="Semantic feature learning rate")
     
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)

@@ -1,0 +1,10 @@
+segment-anything-2
+open-clip-torch
+Pillow>=9.0
+numpy>=1.23
+opencv-python>=4.7
+matplotlib>=3.6
+imageio[ffmpeg]
+tqdm
+torch>=2.0
+torchvision>=0.15

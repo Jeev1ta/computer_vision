@@ -102,8 +102,10 @@ class ModelHiddenParams(ParamGroup):
         self.grid_pe=0 # useless, I was trying to add positional encoding to hexplane's features
         self.static_mlp=False # useless
         self.apply_rotation=False # useless
+        # Phase 3: Semantic feature configuration
+        self.semantic_feature_dim = 0  # 0 = disabled, >0 = enabled (e.g. 5 for classes, 512 for CLIP)
+        self.semantic_mode = "cross_entropy"  # "cross_entropy", "cosine", "mse"
 
-        
         super().__init__(parser, "ModelHiddenParams")
         
 class OptimizationParams(ParamGroup):
@@ -147,6 +149,9 @@ class OptimizationParams(ParamGroup):
         self.opacity_threshold_fine_after = 0.005
         self.batch_size=1
         self.add_point=False
+        # Phase 3: Semantic loss weight & learning rate
+        self.lambda_sem = 0.1
+        self.semantic_lr = 0.005
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

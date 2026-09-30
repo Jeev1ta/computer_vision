@@ -61,6 +61,9 @@ class GaussianModel:
         self.percent_dense = 0
         self.spatial_lr_scale = 0
         self._deformation_table = torch.empty(0)
+        # Phase 3: Semantic features per Gaussian
+        self.semantic_feature_dim = getattr(args, 'semantic_feature_dim', 0)
+        self._semantic_features = torch.empty(0)
         self.setup_functions()
 
     def capture(self):
@@ -80,6 +83,7 @@ class GaussianModel:
             self.denom,
             self.optimizer.state_dict(),
             self.spatial_lr_scale,
+            self._semantic_features,
         )
     
     def restore(self, model_args, training_args):
@@ -98,7 +102,12 @@ class GaussianModel:
         xyz_gradient_accum, 
         denom,
         opt_dict, 
-        self.spatial_lr_scale) = model_args
+        self.spatial_lr_scale,
+        *rest) = model_args
+        if len(rest) > 0 and rest[0] is not None:
+            self._semantic_features = rest[0]
+            if self._semantic_features.numel() > 0:
+                self.semantic_feature_dim = self._semantic_features.shape[-1]
         self._deformation.load_state_dict(deform_state)
         self.training_setup(training_args)
         self.xyz_gradient_accum = xyz_gradient_accum
@@ -126,6 +135,16 @@ class GaussianModel:
     @property
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
+    
+    @property
+    def get_semantic_features(self):
+        """Return semantic features for all Gaussians. Shape: (N, D_sem)."""
+        return self._semantic_features
+
+    @property
+    def has_semantics(self):
+        """Check if semantic features are initialized."""
+        return self.semantic_feature_dim > 0 and self._semantic_features.numel() > 0
     
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
@@ -162,6 +181,11 @@ class GaussianModel:
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         self._deformation_table = torch.gt(torch.ones((self.get_xyz.shape[0]),device="cuda"),0)
+        # Phase 3: Initialize semantic features
+        if self.semantic_feature_dim > 0:
+            sem_feats = torch.zeros((fused_point_cloud.shape[0], self.semantic_feature_dim), device="cuda")
+            self._semantic_features = nn.Parameter(sem_feats.requires_grad_(True))
+            print(f"  Semantic features initialized: ({fused_point_cloud.shape[0]}, {self.semantic_feature_dim})")
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -180,6 +204,10 @@ class GaussianModel:
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
             
         ]
+        # Phase 3: Add semantic features to optimizer
+        if self.has_semantics:
+            semantic_lr = getattr(training_args, 'semantic_lr', 0.001)
+            l.append({'params': [self._semantic_features], 'lr': semantic_lr, "name": "semantic"})
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
         self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
@@ -241,12 +269,18 @@ class GaussianModel:
             self._deformation_table = torch.load(os.path.join(path, "deformation_table.pth"),map_location="cuda")
         if os.path.exists(os.path.join(path, "deformation_accum.pth")):
             self._deformation_accum = torch.load(os.path.join(path, "deformation_accum.pth"),map_location="cuda")
+        if os.path.exists(os.path.join(path, "semantic_features.pth")):
+            self._semantic_features = torch.load(os.path.join(path, "semantic_features.pth"), map_location="cuda")
+            self.semantic_feature_dim = self._semantic_features.shape[-1]
+            print(f"  Loaded semantic features: {self._semantic_features.shape}")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         # print(self._deformation.deformation_net.grid.)
     def save_deformation(self, path):
         torch.save(self._deformation.state_dict(),os.path.join(path, "deformation.pth"))
         torch.save(self._deformation_table,os.path.join(path, "deformation_table.pth"))
         torch.save(self._deformation_accum,os.path.join(path, "deformation_accum.pth"))
+        if self.has_semantics:
+            torch.save(self._semantic_features, os.path.join(path, "semantic_features.pth"))
     def save_ply(self, path):
         mkdir_p(os.path.dirname(path))
 
@@ -358,6 +392,8 @@ class GaussianModel:
         self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
+        if self.has_semantics and "semantic" in optimizable_tensors:
+            self._semantic_features = optimizable_tensors["semantic"]
         self._deformation_accum = self._deformation_accum[valid_points_mask]
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
         self._deformation_table = self._deformation_table[valid_points_mask]
@@ -387,7 +423,7 @@ class GaussianModel:
 
         return optimizable_tensors
 
-    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_deformation_table):
+    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_deformation_table, new_semantic=None):
         d = {"xyz": new_xyz,
         "f_dc": new_features_dc,
         "f_rest": new_features_rest,
@@ -396,6 +432,11 @@ class GaussianModel:
         "rotation" : new_rotation,
         # "deformation": new_deformation
        }
+        # Phase 3: Include semantic features in densification
+        if new_semantic is not None:
+            d["semantic"] = new_semantic
+        elif self.has_semantics:
+            d["semantic"] = torch.zeros((new_xyz.shape[0], self.semantic_feature_dim), device="cuda")
 
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
         self._xyz = optimizable_tensors["xyz"]
@@ -405,6 +446,9 @@ class GaussianModel:
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
         # self._deformation = optimizable_tensors["deformation"]
+        if self.has_semantics and "semantic" in optimizable_tensors:
+            self._semantic_features = optimizable_tensors["semantic"]
+        
         
         self._deformation_table = torch.cat([self._deformation_table,new_deformation_table],-1)
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -435,7 +479,8 @@ class GaussianModel:
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
         new_deformation_table = self._deformation_table[selected_pts_mask].repeat(N)
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_deformation_table)
+        new_semantic = self._semantic_features[selected_pts_mask].repeat(N, 1) if self.has_semantics else None
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_deformation_table, new_semantic)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
@@ -453,7 +498,8 @@ class GaussianModel:
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
         new_deformation_table = self._deformation_table[selected_pts_mask]
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_deformation_table)
+        new_semantic = self._semantic_features[selected_pts_mask] if self.has_semantics else None
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_deformation_table, new_semantic)
 
     @property
     def get_aabb(self):

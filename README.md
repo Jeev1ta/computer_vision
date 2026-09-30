@@ -1,8 +1,53 @@
-# 4D Gaussian Splatting for Real-Time Dynamic Scene Rendering
+# 🌌 Semantic-Aware Editable Dynamic 3D Reconstruction via 4D Gaussian Splatting
 
-## CVPR 2024
+> **Computer Vision Course Project (Semester 5)**  
+> Based on *"4D Gaussian Splatting for Real-Time Dynamic Scene Rendering"* (CVPR 2024, Wu et al.)  
+> Extended with **SAM 2 + CLIP 2D Semantic Distillation** and **Multi-Pass Differentiable 3D Semantic Rasterization**.
 
-### [Project Page](https://guanjunwu.github.io/4dgs/index.html)| [arXiv Paper](https://arxiv.org/abs/2310.08528)
+---
+
+## ⚡ Quickstart: Run Online with Google Colab (Recommended)
+Because 4D Gaussian Splatting uses custom NVIDIA CUDA C++ kernels, running on Google Colab requires **zero local setup** and runs for free on a T4 GPU:
+
+1. **[4DGS_Phase1_Baseline.ipynb](4DGS_Phase1_Baseline.ipynb)** — Base paper dynamic reconstruction on D-NeRF benchmark.
+2. **[4DGS_Phase2_Semantics.ipynb](4DGS_Phase2_Semantics.ipynb)** — 2D Video segmentation & CLIP feature distillation with SAM 2.
+3. **[4DGS_Phase3_SemanticTraining.ipynb](4DGS_Phase3_SemanticTraining.ipynb)** — Joint RGB + 3D Semantic training and novel-view semantic video rendering.
+
+---
+
+## 🖥️ Running Locally (Linux / NVIDIA GPU)
+
+> ⚠️ **Important**: Custom CUDA kernels require an NVIDIA GPU with CUDA 11.8+. If you clone this repository, you **must use `--recursive`** to clone the rasterizer submodules:
+
+```bash
+# 1. Clone with submodules
+git clone --recursive https://github.com/<your-username>/<your-repo-name>.git
+cd <your-repo-name>
+
+# If you already cloned without --recursive, run:
+git submodule update --init --recursive
+
+# 2. Setup Conda environment
+conda create -n 4dgs_sem python=3.10 -y
+conda activate 4dgs_sem
+
+# 3. Install PyTorch with CUDA support (e.g. CUDA 11.8 or 12.1)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+# 4. Install CUDA rasterizer & KNN submodules
+pip install -e submodules/depth-diff-gaussian-rasterization
+pip install -e submodules/simple-knn
+
+# 5. Install dependencies
+pip install -r requirements.txt
+pip install -r preprocess/requirements.txt
+```
+
+---
+
+# Original Base Paper: 4D Gaussian Splatting (CVPR 2024)
+
+### [Project Page](https://guanjunwu.github.io/4dgs/index.html) | [arXiv Paper](https://arxiv.org/abs/2310.08528)
 
 [Guanjun Wu](https://guanjunwu.github.io/) <sup>1*</sup>, [Taoran Yi](https://github.com/taoranyi) <sup>2*</sup>,
 [Jiemin Fang](https://jaminfong.cn/) <sup>3‡</sup>, [Lingxi Xie](http://lingxixie.com/) <sup>3 </sup>, </br>[Xiaopeng Zhang](https://scholar.google.com/citations?user=Ud6aBAcAAAAJ&hl=zh-CN) <sup>3 </sup>, [Wei Wei](https://www.eric-weiwei.com/) <sup>1 </sup>,[Wenyu Liu](http://eic.hust.edu.cn/professor/liuwenyu/) <sup>2 </sup>, [Qi Tian](https://www.qitian1987.com/) <sup>3 </sup> , [Xinggang Wang](https://xwcv.github.io) <sup>2‡✉</sup>
@@ -10,8 +55,6 @@
 <sup>1 </sup>School of CS, HUST &emsp; <sup>2 </sup>School of EIC, HUST &emsp; <sup>3 </sup>Huawei Inc. &emsp;
 
 <sup>\*</sup> Equal Contributions. <sup>$\ddagger$</sup> Project Lead. <sup>✉</sup> Corresponding Author.
-
-
 
 ![block](assets/teaserfig.jpg)
 Our method converges very quickly and achieves real-time rendering speed.

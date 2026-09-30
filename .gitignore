@@ -9,3 +9,7 @@ screenshots
 data/
 data
 submodules/
+scratch/
+__pycache__/
+*.egg-info/
+.DS_Store

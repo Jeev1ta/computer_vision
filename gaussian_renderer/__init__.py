@@ -137,3 +137,101 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             "radii": radii,
             "depth":depth}
 
+
+def render_semantics(viewpoint_camera, pc : GaussianModel, pipe, stage="fine", cam_type=None):
+    """
+    Render semantic features for 4D Gaussians via multi-pass rasterization.
+    
+    Splits D-dimensional semantic features into 3-channel chunks, rasterizes each
+    using the same camera, depth sorting, and alpha compositing as RGB rendering,
+    then concatenates them into a (D, H, W) rendered semantic map.
+    
+    Args:
+        viewpoint_camera: Camera viewpoint with pose, FoV, and time.
+        pc: GaussianModel with semantic features initialized.
+        pipe: Pipeline parameters.
+        stage: "coarse" or "fine".
+        cam_type: Optional camera type.
+        
+    Returns:
+        (D, H, W) rendered semantic tensor, or None if pc has no semantics.
+    """
+    if not pc.has_semantics:
+        return None
+
+    sem_features = pc.get_semantic_features  # (N, D)
+    N, D = sem_features.shape
+
+    screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
+    try:
+        screenspace_points.retain_grad()
+    except:
+        pass
+
+    means3D = pc.get_xyz
+    time = torch.tensor(viewpoint_camera.time).to(pc.get_xyz.device).repeat(pc.get_xyz.shape[0], 1)
+    
+    tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
+    tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
+    bg = torch.zeros(3, device="cuda")
+    raster_settings = GaussianRasterizationSettings(
+        image_height=int(viewpoint_camera.image_height),
+        image_width=int(viewpoint_camera.image_width),
+        tanfovx=tanfovx,
+        tanfovy=tanfovy,
+        bg=bg,
+        scale_modifier=1.0,
+        viewmatrix=viewpoint_camera.world_view_transform.cuda(),
+        projmatrix=viewpoint_camera.full_proj_transform.cuda(),
+        sh_degree=0,
+        campos=viewpoint_camera.camera_center.cuda(),
+        prefiltered=False,
+        debug=pipe.debug
+    )
+
+    rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+
+    means2D = screenspace_points
+    opacity = pc._opacity
+    scales = pc._scaling
+    rotations = pc._rotation
+    shs = pc.get_features
+
+    if "coarse" in stage:
+        means3D_final, scales_final, rotations_final, opacity_final, _ = means3D, scales, rotations, opacity, shs
+    elif "fine" in stage:
+        means3D_final, scales_final, rotations_final, opacity_final, _ = pc._deformation(
+            means3D, scales, rotations, opacity, shs, time
+        )
+    else:
+        raise NotImplementedError
+
+    scales_final = pc.scaling_activation(scales_final)
+    rotations_final = pc.rotation_activation(rotations_final)
+    opacity = pc.opacity_activation(opacity_final)
+
+    rendered_chunks = []
+    # Process in chunks of 3 channels
+    for c_start in range(0, D, 3):
+        c_end = min(c_start + 3, D)
+        chunk = sem_features[:, c_start:c_end]
+        if chunk.shape[1] < 3:
+            pad = torch.zeros((N, 3 - chunk.shape[1]), device="cuda", dtype=chunk.dtype)
+            chunk = torch.cat([chunk, pad], dim=1)
+        
+        rendered_chunk, _, _ = rasterizer(
+            means3D=means3D_final,
+            means2D=means2D,
+            shs=None,
+            colors_precomp=chunk,
+            opacities=opacity,
+            scales=scales_final,
+            rotations=rotations_final,
+            cov3D_precomp=None
+        )
+        rendered_chunks.append(rendered_chunk[:(c_end - c_start)])
+
+    rendered_semantics = torch.cat(rendered_chunks, dim=0)  # (D, H, W)
+    return rendered_semantics
+
+
