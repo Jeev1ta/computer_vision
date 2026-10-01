@@ -566,65 +566,65 @@
       pitch = Math.max(-1.1, Math.min(1.1, pitch + dy * 0.01));
     });
 
-    // 4x4 Matrix Math
-    function multiply(a, b) {
-      const out = new Float32Array(16);
-      for (let i = 0; i < 4; i++) {
-        for (let j = 0; j < 4; j++) {
-          out[i*4 + j] = a[i*4 + 0]*b[0*4 + j] + a[i*4 + 1]*b[1*4 + j] + a[i*4 + 2]*b[2*4 + j] + a[i*4 + 3]*b[3*4 + j];
+    // 4x4 Matrix Math (Standard WebGL Column-Major)
+    function mat4Multiply(out, a, b) {
+      for (let c = 0; c < 4; c++) {
+        for (let r = 0; r < 4; r++) {
+          let s = 0;
+          for (let k = 0; k < 4; k++) {
+            s += a[k * 4 + r] * b[c * 4 + k];
+          }
+          out[c * 4 + r] = s;
         }
       }
       return out;
     }
 
-    function createMVP(w, h, yaw, pitch, dist, tx, ty) {
-      const aspect = w / h;
-      const fov = 45 * Math.PI / 180;
-      const f = 1.0 / Math.tan(fov / 2);
-      const near = 0.1, far = 50.0;
-      const P = new Float32Array([
-        f / aspect, 0, 0, 0,
-        0, f, 0, 0,
-        0, 0, (far + near) / (near - far), -1,
-        0, 0, (2 * far * near) / (near - far), 0
-      ]);
+    function makePerspective(out, fovy, aspect, near, far) {
+      const f = 1.0 / Math.tan(fovy / 2);
+      out.fill(0);
+      out[0] = f / aspect;
+      out[5] = f;
+      out[10] = (far + near) / (near - far);
+      out[11] = -1.0;
+      out[14] = (2 * far * near) / (near - far);
+      return out;
+    }
 
-      const cy = Math.cos(yaw), sy = Math.sin(yaw);
-      const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    function makeLookAt(out, eyeX, eyeY, eyeZ, tx, ty, tz, upX, upY, upZ) {
+      let z0 = eyeX - tx, z1 = eyeY - ty, z2 = eyeZ - tz;
+      let len = Math.hypot(z0, z1, z2);
+      if (len > 0) { z0 /= len; z1 /= len; z2 /= len; }
 
-      // View matrix: Trans(0, 0, -dist) * RotX(pitch) * RotY(yaw) * Trans(-tx, -ty, 0)
-      const Ry = new Float32Array([
-        cy, 0, -sy, 0,
-        0, 1, 0, 0,
-        sy, 0, cy, 0,
-        0, 0, 0, 1
-      ]);
-      const Rx = new Float32Array([
-        1, 0, 0, 0,
-        0, cp, sp, 0,
-        0, -sp, cp, 0,
-        0, 0, 0, 1
-      ]);
-      const R = multiply(Rx, Ry);
+      let x0 = upY * z2 - upZ * z1, x1 = upZ * z0 - upX * z2, x2 = upX * z1 - upY * z0;
+      len = Math.hypot(x0, x1, x2);
+      if (len > 0) { x0 /= len; x1 /= len; x2 /= len; }
 
-      // Translation
-      R[12] += -tx * R[0] + -ty * R[4];
-      R[13] += -tx * R[1] + -ty * R[5];
-      R[14] += -tx * R[2] + -ty * R[6] - dist;
+      let y0 = z1 * x2 - z2 * x1, y1 = z2 * x0 - z0 * x2, y2 = z0 * x1 - z1 * x0;
 
-      return multiply(P, R);
+      out[0] = x0; out[1] = y0; out[2] = z0; out[3] = 0;
+      out[4] = x1; out[5] = y1; out[6] = z1; out[7] = 0;
+      out[8] = x2; out[9] = y2; out[10] = z2; out[11] = 0;
+      out[12] = -(x0 * eyeX + x1 * eyeY + x2 * eyeZ);
+      out[13] = -(y0 * eyeX + y1 * eyeY + y2 * eyeZ);
+      out[14] = -(z0 * eyeX + z1 * eyeY + z2 * eyeZ);
+      out[15] = 1;
+      return out;
     }
 
     // Render loop
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    gl.enable(gl.DEPTH_TEST);
-    gl.depthFunc(gl.LEQUAL);
+    gl.disable(gl.DEPTH_TEST);
+
+    const matP = new Float32Array(16);
+    const matV = new Float32Array(16);
+    const matMVP = new Float32Array(16);
 
     function renderFrame() {
       // Resize to match display width
-      const w = canvas.clientWidth * window.devicePixelRatio;
-      const h = canvas.clientHeight * window.devicePixelRatio;
+      const w = canvas.parentElement.clientWidth;
+      const h = canvas.parentElement.clientHeight;
       if (canvas.width !== w || canvas.height !== h) {
         canvas.width = w;
         canvas.height = h;
@@ -633,21 +633,31 @@
 
       // Auto-spin
       if (autoSpin) {
-        yaw += 0.007;
+        yaw += 0.008;
       }
 
       // Smooth semantic transition
       currentSemantic += (targetSemantic - currentSemantic) * 0.12;
 
       gl.clearColor(0.04, 0.05, 0.07, 1.0);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.clear(gl.COLOR_BUFFER_BIT);
 
       gl.useProgram(program);
 
-      const mvp = createMVP(canvas.width, canvas.height, yaw, pitch, dist, targetX, targetY);
-      gl.uniformMatrix4fv(locMvp, false, mvp);
+      // Eye position orbiting target (0, 0.42, 0)
+      const targetCenterY = 0.42;
+      const cosP = Math.cos(pitch);
+      const eyeX = targetX + dist * Math.sin(yaw) * cosP;
+      const eyeY = targetCenterY + dist * Math.sin(pitch);
+      const eyeZ = dist * Math.cos(yaw) * cosP;
+
+      makePerspective(matP, 45 * Math.PI / 180, canvas.width / canvas.height, 0.1, 50.0);
+      makeLookAt(matV, eyeX, eyeY, eyeZ, targetX, targetCenterY, 0, 0, 1, 0);
+      mat4Multiply(matMVP, matP, matV);
+
+      gl.uniformMatrix4fv(locMvp, false, matMVP);
       gl.uniform1f(locSemFactor, currentSemantic);
-      gl.uniform1f(locPointSize, (canvas.height / 380) * 11.0);
+      gl.uniform1f(locPointSize, Math.max(10.0, (canvas.height / 380) * 14.0));
 
       // Bind attributes
       gl.bindBuffer(gl.ARRAY_BUFFER, bufPos);
