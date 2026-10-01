@@ -54,6 +54,15 @@
     .legend-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 16px; }
     .legend-item { display: flex; align-items: center; gap: 8px; font-size: 14px; background: rgba(255,255,255,0.03); padding: 8px 12px; border-radius: 6px; border-left: 4px solid #fff; }
 
+    /* Input Data Showcase Cards */
+    .input-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+    .input-card { background: rgba(0,0,0,0.4); border: 1px solid var(--border); border-radius: 8px; padding: 10px; text-align: center; transition: transform 0.2s, border-color 0.2s; }
+    .input-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+    .input-img-wrap { position: relative; height: 180px; overflow: hidden; border-radius: 6px; background: #07090c; margin-bottom: 8px; display: flex; align-items: center; justify-content: center; }
+    .input-img-wrap img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .input-tag { position: absolute; top: 6px; left: 6px; font-size: 10px; background: rgba(0,0,0,0.8); color: #fff; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); font-weight: 500; }
+    .flow-step { display: flex; align-items: center; gap: 8px; font-size: 13px; background: rgba(255,255,255,0.03); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); }
+
     /* Table */
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
     th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--border); }
@@ -89,6 +98,85 @@
 
   <!-- TAB 1: Base 4D-GS Replay & Live 3D Orbit -->
   <div id="tab-demo" class="tab-content active">
+
+    <!-- 📥 INPUT DATA PANEL (Multi-View Training Sequences & 2D Supervision Target) -->
+    <div class="card" style="margin-bottom: 24px; border-left: 4px solid var(--accent);">
+      <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <span>📥 Training Input Data (D-NeRF Standup Sequence + SAM 2 / CLIP)</span>
+        <span style="font-size: 12px; color: var(--accent); background: rgba(88, 166, 255, 0.12); padding: 4px 10px; border-radius: 12px; border: 1px solid rgba(88, 166, 255, 0.3);">
+          Multi-View Dynamic Poses & Masks (Input) ➔ 3D Gaussian Radiance Field (Output)
+        </span>
+      </div>
+      <p style="font-size: 13.5px; color: #8b949e; margin-bottom: 16px;">
+        <strong style="color: var(--text-bright);">What are the Inputs?</strong> 4D Gaussian Splatting is <em>not</em> single-image generative AI. The reconstruction pipeline takes calibrated <strong>multi-view camera video streams</strong> at varied camera poses \([R|t]\) across timestamps \(t \in [0, 1]\), paired with zero-shot <strong>2D semantic masks (SAM 2 + CLIP)</strong> and initial <strong>COLMAP sparse points</strong>, to reconstruct the continuous 4D space-time radiance field shown below.
+      </p>
+
+      <!-- 4-Grid of Input Frames -->
+      <div class="input-grid">
+        <!-- Input Frame 1 -->
+        <div class="input-card">
+          <div class="input-img-wrap">
+            <img src="assets/input_cam_01.png" alt="Camera 01 Front View">
+            <span class="input-tag">Cam 01 • t = 0.0s</span>
+          </div>
+          <div style="font-size: 13px; font-weight: 600; color: var(--text-bright);">Camera 01 (Frontal)</div>
+          <div style="font-size: 11px; color: #8b949e; margin-top: 2px;">Azimuth: 0° • Initial Rest Pose</div>
+          <div style="margin-top: 6px; font-size: 10.5px; color: #58a6ff; font-family: monospace;">Pose: [R|t]&#8321; • 800&times;800</div>
+        </div>
+
+        <!-- Input Frame 2 -->
+        <div class="input-card">
+          <div class="input-img-wrap">
+            <img src="assets/input_cam_02.png" alt="Camera 02 Oblique View">
+            <span class="input-tag">Cam 02 • t = 0.4s</span>
+          </div>
+          <div style="font-size: 13px; font-weight: 600; color: var(--text-bright);">Camera 02 (45° Oblique)</div>
+          <div style="font-size: 11px; color: #8b949e; margin-top: 2px;">Azimuth: 45° • Bending Motion</div>
+          <div style="margin-top: 6px; font-size: 10.5px; color: #58a6ff; font-family: monospace;">Pose: [R|t]&#8322; • 800&times;800</div>
+        </div>
+
+        <!-- Input Frame 3 -->
+        <div class="input-card">
+          <div class="input-img-wrap">
+            <img src="assets/input_cam_03.png" alt="Camera 03 Side View">
+            <span class="input-tag">Cam 03 • t = 0.8s</span>
+          </div>
+          <div style="font-size: 13px; font-weight: 600; color: var(--text-bright);">Camera 03 (90° Side)</div>
+          <div style="font-size: 11px; color: #8b949e; margin-top: 2px;">Azimuth: 90° • Deep Squat</div>
+          <div style="margin-top: 6px; font-size: 10.5px; color: #58a6ff; font-family: monospace;">Pose: [R|t]&#8323; • 800&times;800</div>
+        </div>
+
+        <!-- Input Frame 4: 2D Foundation Supervision -->
+        <div class="input-card" style="border-color: rgba(163, 113, 247, 0.4); background: rgba(163, 113, 247, 0.04);">
+          <div class="input-img-wrap">
+            <img src="assets/input_sam2_clean.png" alt="2D SAM 2 Mask Supervision">
+            <span class="input-tag" style="background: rgba(163, 113, 247, 0.3); color: var(--purple); border-color: var(--purple);">SAM 2 + CLIP Target</span>
+          </div>
+          <div style="font-size: 13px; font-weight: 600; color: var(--purple);">2D Semantic Supervision</div>
+          <div style="font-size: 11px; color: #8b949e; margin-top: 2px;">Zero-shot prompt distillation</div>
+          <div style="margin-top: 6px; font-size: 10.5px; color: #a371f7; font-family: monospace;">4 Part Classes • ViT-B/16</div>
+        </div>
+      </div>
+
+      <!-- Flow Bar to Output -->
+      <div style="display: flex; align-items: center; justify-content: center; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); font-size: 13px; color: #adbac7; gap: 10px; flex-wrap: wrap;">
+        <div class="flow-step">
+          <span style="font-size: 16px;">📥</span>
+          <span><strong>Input Data:</strong> Multi-View Frames + Camera Poses + 2D SAM 2 Masks</span>
+        </div>
+        <span style="color: var(--accent); font-weight: bold; font-size: 18px;">➔</span>
+        <div class="flow-step" style="border-color: var(--accent); background: rgba(88, 166, 255, 0.08);">
+          <span style="font-size: 16px;">⚙️</span>
+          <span><strong>HexPlane Optimization:</strong> Space-Time Voxel Planes + Semantic Loss</span>
+        </div>
+        <span style="color: var(--accent); font-weight: bold; font-size: 18px;">➔</span>
+        <div class="flow-step" style="border-color: #2ecc71; background: rgba(46, 204, 113, 0.08);">
+          <span style="font-size: 16px;">🎮</span>
+          <span><strong>Reconstructed 3D Output:</strong> Interactive Gaussian Orbit & 3D Semantics (Below)</span>
+        </div>
+      </div>
+    </div>
+
     <div class="grid-2">
       <div class="card">
         <div class="card-title">
@@ -138,8 +226,9 @@
           <li><strong style="color: var(--text-bright);">Semantic Awareness Toggle</strong>: Click <code style="color: var(--accent);">🧠 3D Semantics</code> on the 3D viewer to see our Phase 3 learned classes (vest, head, arms, legs) colorized directly on the 3D Gaussians.</li>
           <li><strong style="color: var(--text-bright);">Explicit 3D Deformation</strong>: Space-time HexPlane multi-resolution neural voxel planes model non-rigid motion over time.</li>
         </ul>
-        <div style="margin-top: 24px; padding: 14px; background: rgba(88, 166, 255, 0.08); border-radius: 6px; border-left: 3px solid var(--accent); font-size: 13px;">
-          <strong>Examiner Talking Point:</strong> <em>"This live 3D viewer demonstrates our 4D Gaussian representation. Notice how toggling between 'RGB' and '3D Semantics' proves that semantic identity is learned directly per-Gaussian in 3D space, not just as a 2D post-processing filter."</em>
+        <div style="margin-top: 20px; padding: 14px; background: rgba(88, 166, 255, 0.08); border-radius: 6px; border-left: 3px solid var(--accent); font-size: 13px;">
+          <strong style="color: var(--accent);">🗣️ Examiner Talking Point (Input vs. Output):</strong><br>
+          <em style="color: #e6edf3;">"If the examiner asks what the input is: Clarify that this is <strong>not</strong> single-image generative AI. The inputs are calibrated <strong>dynamic multi-view video streams</strong> with known 6-DoF camera poses (shown above in Cam 01, 02, 03) and 2D SAM 2 masks. The 4D-GS HexPlane network fuses them over space and time, producing the fully interactive 3D Gaussian radiance field and 3D semantic field you can orbit right here in real time!"</em>
         </div>
       </div>
     </div>
